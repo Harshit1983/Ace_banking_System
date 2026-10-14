@@ -1,3 +1,7 @@
-
+node_modules/
 client/.env
 server/.env
+*.log
+dist/
+coverage/
+.DS_Store

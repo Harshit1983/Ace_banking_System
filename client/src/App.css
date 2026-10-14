@@ -934,6 +934,10 @@ button {
   border-radius: 10px;
 }
 
+.money-action-tabs.three-tabs {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .money-tab {
   padding: 12px;
   color: #6e7b91;
@@ -942,6 +946,7 @@ button {
   border-radius: 7px;
   font-size: 13px;
   font-weight: 700;
+  transition: all 0.2s ease;
 }
 
 .money-tab.active {
@@ -967,8 +972,219 @@ button {
   margin-top: 8px;
 }
 
+/* Settings button in header */
+.settings-button {
+  padding: 8px 14px;
+  background: #f1f4fa;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.settings-button:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+/* Modal styles */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal-dialog {
+  background: #ffffff;
+  border-radius: 16px;
+  width: min(540px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+  animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalPop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-family: "Manrope", sans-serif;
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.modal-close {
+  background: transparent;
+  border: 0;
+  font-size: 18px;
+  color: #94a3b8;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.modal-close:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.modal-tabs {
+  display: flex;
+  padding: 0 24px;
+  gap: 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.modal-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 12px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.modal-tab.active {
+  color: #2452cc;
+  border-bottom-color: #2452cc;
+}
+
+.modal-body {
+  padding: 24px;
+}
+
+.read-only-info {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border-radius: 8px;
+  margin-bottom: 18px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.read-only-info strong {
+  display: block;
+  margin-top: 2px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.status-badge {
+  color: #10b981 !important;
+  font-weight: 700;
+}
+
+.modal-submit {
+  margin-top: 14px;
+  width: 100%;
+}
+
+/* Filter chips in transaction header */
+.tx-filter-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tx-chip {
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.tx-chip:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.tx-chip.active {
+  background: #2452cc;
+  border-color: #2452cc;
+  color: #ffffff;
+}
+
+.account-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+  margin-left: 4px;
+}
+
+/* Pagination bar */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.page-button {
+  padding: 8px 14px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  transition: all 0.2s;
+}
+
+.page-button:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.page-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.page-info {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+}
+
 @media (max-width: 480px) {
   .money-action-panel {
     padding: 19px 16px;
+  }
+  .money-action-tabs.three-tabs {
+    grid-template-columns: 1fr;
   }
 }

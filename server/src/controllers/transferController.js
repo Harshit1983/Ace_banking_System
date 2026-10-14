@@ -2,6 +2,7 @@
 import mongoose from "mongoose";
 import Account from "../models/Account.js";
 import Transaction from "../models/Transaction.js";
+import { runTransaction } from "../utils/transactionRunner.js";
 
 const parseAmountToPaise = (amount) => {
   const value = String(amount ?? "").trim();
@@ -50,25 +51,29 @@ export const transferMoney = async (req, res) => {
 
   const receiverNo = String(receiverAccountNo).trim();
 
-  const session = await mongoose.startSession();
-
   try {
     let result;
 
-    await session.withTransaction(async () => {
-      const sender = await Account.findOne({
+    await runTransaction(async (session) => {
+      const sessionOption = session ? { session } : undefined;
+
+      const senderQuery = Account.findOne({
         userId: req.user.id,
         status: "ACTIVE",
-      }).session(session);
+      });
+      if (session) senderQuery.session(session);
+      const sender = await senderQuery;
 
       if (!sender) {
         throw new Error("SENDER_ACCOUNT_NOT_FOUND");
       }
 
-      const receiver = await Account.findOne({
+      const receiverQuery = Account.findOne({
         accountNo: receiverNo,
         status: "ACTIVE",
-      }).session(session);
+      });
+      if (session) receiverQuery.session(session);
+      const receiver = await receiverQuery;
 
       if (!receiver) {
         throw new Error("RECEIVER_ACCOUNT_NOT_FOUND");
@@ -88,8 +93,8 @@ export const transferMoney = async (req, res) => {
           $inc: { balancePaise: -amountPaise },
         },
         {
-          new: true,
-          session,
+          returnDocument: "after",
+          ...(session ? { session } : {}),
         }
       );
 
@@ -97,36 +102,47 @@ export const transferMoney = async (req, res) => {
         throw new Error("INSUFFICIENT_BALANCE");
       }
 
-      const creditedReceiver = await Account.findOneAndUpdate(
-        {
-          _id: receiver._id,
-          status: "ACTIVE",
-        },
-        {
-          $inc: { balancePaise: amountPaise },
-        },
-        {
-          new: true,
-          session,
-        }
-      );
-
-      if (!creditedReceiver) {
-        throw new Error("RECEIVER_ACCOUNT_NOT_FOUND");
-      }
-
-      await Transaction.create(
-        [
+      let creditedReceiver;
+      try {
+        creditedReceiver = await Account.findOneAndUpdate(
           {
-            senderAccount: debitedSender._id,
-            receiverAccount: creditedReceiver._id,
-            amountPaise,
-            txType: "TRANSFER",
-            remark: remark.trim(),
+            _id: receiver._id,
+            status: "ACTIVE",
           },
-        ],
-        { session }
-      );
+          {
+            $inc: { balancePaise: amountPaise },
+          },
+          {
+            returnDocument: "after",
+            ...(session ? { session } : {}),
+          }
+        );
+
+        if (!creditedReceiver) {
+          throw new Error("RECEIVER_ACCOUNT_NOT_FOUND");
+        }
+
+        await Transaction.create(
+          [
+            {
+              senderAccount: debitedSender._id,
+              receiverAccount: creditedReceiver._id,
+              amountPaise,
+              txType: "TRANSFER",
+              remark: remark.trim(),
+            },
+          ],
+          sessionOption
+        );
+      } catch (innerError) {
+        // Standalone compensation rollback
+        if (!session) {
+          await Account.findByIdAndUpdate(sender._id, {
+            $inc: { balancePaise: amountPaise },
+          }).catch(() => {});
+        }
+        throw innerError;
+      }
 
       result = {
         amountPaise,
@@ -165,7 +181,5 @@ export const transferMoney = async (req, res) => {
       success: false,
       message: "Transfer failed",
     });
-  } finally {
-    await session.endSession();
   }
 };

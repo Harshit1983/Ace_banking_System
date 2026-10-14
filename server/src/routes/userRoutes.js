@@ -1,15 +1,18 @@
-
 import express from "express";
 import authMiddleware from "../middleware/authMiddleware.js";
+import {
+  getProfile,
+  updateProfile,
+  changePassword,
+} from "../controllers/userController.js";
 
 const router = express.Router();
 
-router.get("/profile", authMiddleware, (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Authenticated profile retrieved successfully",
-    user: req.user,
-  });
-});
+// All user routes require authentication
+router.use(authMiddleware);
+
+router.get("/profile", getProfile);
+router.put("/profile", updateProfile);
+router.put("/change-password", changePassword);
 
 export default router;

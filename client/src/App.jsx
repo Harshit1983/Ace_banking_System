@@ -1,18 +1,21 @@
-
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import api from "./services/api";
 import "./App.css";
 import Dashboard from "./pages/Dashboard";
 
 function App() {
-  const [page, setPage] = useState("login");
+  const [page, setPage] = useState(
+    localStorage.getItem("ace_bank_token") ? "dashboard" : "login"
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+
+
   const [authenticated, setAuthenticated] = useState(
-  Boolean(localStorage.getItem("ace_bank_token"))
-);
+    Boolean(localStorage.getItem("ace_bank_token"))
+  );
 
   const [form, setForm] = useState({
     firstName: "",
@@ -21,6 +24,26 @@ function App() {
     email: "",
     password: "",
   });
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setAuthenticated(false);
+      setPage("login");
+      setError("Your session has expired. Please log in again.");
+      setSuccess("");
+    };
+
+    window.addEventListener(
+      "ace-bank-unauthorized",
+      handleUnauthorized
+    );
+
+    return () => {
+      window.removeEventListener(
+        "ace-bank-unauthorized",
+        handleUnauthorized
+      );
+    };
+  }, []);
 
   function handleChange(event) {
     setForm({
@@ -32,8 +55,33 @@ function App() {
 
   async function handleSubmit(event) {
     event.preventDefault();
+    if (loading) return;
     setError("");
     setSuccess("");
+
+    if (page === "register") {
+      const cleanFirst = form.firstName.trim();
+      const cleanLast = form.lastName.trim();
+      const cleanAadhaar = form.aadhaarNo.trim();
+
+      if (!cleanFirst || cleanFirst.length > 50) {
+        setError("First name must be between 1 and 50 characters.");
+        return;
+      }
+      if (!cleanLast || cleanLast.length > 50) {
+        setError("Last name must be between 1 and 50 characters.");
+        return;
+      }
+      if (!/^\d{12}$/.test(cleanAadhaar)) {
+        setError("Aadhaar number must contain exactly 12 digits.");
+        return;
+      }
+      if (form.password.length < 8 || form.password.length > 72) {
+        setError("Password must contain 8 to 72 characters.");
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
@@ -42,9 +90,15 @@ function App() {
 
       const payload =
         page === "register"
-          ? form
+          ? {
+              firstName: form.firstName.trim(),
+              lastName: form.lastName.trim(),
+              aadhaarNo: form.aadhaarNo.trim(),
+              email: form.email.trim(),
+              password: form.password,
+            }
           : {
-              email: form.email,
+              email: form.email.trim(),
               password: form.password,
             };
 
@@ -58,12 +112,10 @@ function App() {
           ? "Registration successful! Your account has been created."
           : "Login successful!"
       );
-
-      console.log("Authentication response:", response.data);
     } catch (err) {
       setError(
         err.response?.data?.message ||
-          "Unable to connect to the server. Please check your backend."
+        "Unable to connect to the server. Please check your backend."
       );
     } finally {
       setLoading(false);
@@ -76,25 +128,25 @@ function App() {
     setSuccess("");
   }
   if (authenticated) {
-  return (
-    <Dashboard
-      onLogout={() => {
-        localStorage.removeItem("ace_bank_token");
-        setAuthenticated(false);
-        setPage("login");
-        setForm({
-          firstName: "",
-          lastName: "",
-          aadhaarNo: "",
-          email: "",
-          password: "",
-        });
-        setError("");
-        setSuccess("");
-      }}
-    />
-  );
-}
+    return (
+      <Dashboard
+        onLogout={() => {
+          localStorage.removeItem("ace_bank_token");
+          setAuthenticated(false);
+          setPage("login");
+          setForm({
+            firstName: "",
+            lastName: "",
+            aadhaarNo: "",
+            email: "",
+            password: "",
+          });
+          setError("");
+          setSuccess("");
+        }}
+      />
+    );
+  }
 
   return (
     <div className="bank-page">
