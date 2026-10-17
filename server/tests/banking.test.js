@@ -38,7 +38,7 @@ describe("ACE Bank End-to-End Banking Integration", () => {
     }
     // Clean up test data
     await User.deleteMany({ email: { $in: [userAData.email, userBData.email] } });
-  });
+  }, 25000);
 
   afterAll(async () => {
     // Clean up all artifacts created during testing
@@ -57,7 +57,7 @@ describe("ACE Bank End-to-End Banking Integration", () => {
       });
     }
     await mongoose.disconnect();
-  });
+  }, 25000);
 
   test("Health check endpoint reports database connected", async () => {
     const res = await request(app).get("/api/health");

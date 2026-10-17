@@ -2,6 +2,7 @@
 import mongoose from "mongoose";
 import Account from "../models/Account.js";
 import Transaction from "../models/Transaction.js";
+import User from "../models/User.js";
 import { runTransaction } from "../utils/transactionRunner.js";
 
 // Daily withdrawal limit is ₹500 (50,000 paise).
@@ -95,7 +96,10 @@ export const deposit = async (req, res) => {
             receiverAccount: updatedAccount._id,
             amountPaise,
             txType: "DEPOSIT",
-            remark: "Simulated deposit",
+            remark:
+              typeof req.body.remark === "string" && req.body.remark.trim()
+                ? req.body.remark.trim()
+                : "Simulated deposit",
           },
         ],
         sessionOption
@@ -130,6 +134,27 @@ export const deposit = async (req, res) => {
   }
 };
 
+const userWithdrawLocks = new Map();
+
+const withUserWithdrawLock = async (userId, fn) => {
+  const key = String(userId);
+  const prevLock = userWithdrawLocks.get(key) || Promise.resolve();
+  let release;
+  const currentLock = new Promise((resolve) => {
+    release = resolve;
+  });
+  userWithdrawLocks.set(key, currentLock);
+  try {
+    await prevLock.catch(() => {});
+    return await fn();
+  } finally {
+    release();
+    if (userWithdrawLocks.get(key) === currentLock) {
+      userWithdrawLocks.delete(key);
+    }
+  }
+};
+
 export const withdraw = async (req, res) => {
   const amountPaise = parseAmountToPaise(req.body.amount);
 
@@ -143,7 +168,8 @@ export const withdraw = async (req, res) => {
   try {
     let result;
 
-    await runTransaction(async (session) => {
+    await withUserWithdrawLock(req.user.id, async () => {
+      await runTransaction(async (session) => {
       const sessionOption = session ? { session } : undefined;
 
       const accountQuery = Account.findOne({
@@ -213,7 +239,10 @@ export const withdraw = async (req, res) => {
             receiverAccount: null,
             amountPaise,
             txType: "WITHDRAWAL",
-            remark: "Simulated withdrawal",
+            remark:
+              typeof req.body.remark === "string" && req.body.remark.trim()
+                ? req.body.remark.trim()
+                : "Simulated withdrawal",
           },
         ],
         sessionOption
@@ -224,6 +253,7 @@ export const withdraw = async (req, res) => {
         balancePaise: updatedAccount.balancePaise,
         balanceRupees: updatedAccount.balancePaise / 100,
       };
+    });
     });
 
     return res.status(200).json({
@@ -413,3 +443,283 @@ export const getTransactionHistory = async (req, res) => {
     });
   }
 };
+
+// ================= DOWNLOAD ACCOUNT STATEMENT =================
+// Helper to escape CSV values and prevent spreadsheet formula injection
+const sanitizeCsvCell = (val) => {
+  if (val === null || val === undefined) return '""';
+  let str = String(val).trim();
+  // Prefix dangerous formula initiator characters with a single apostrophe
+  if (/^[=\+\-@\t\r]/.test(str)) {
+    str = "'" + str;
+  }
+  return `"${str.replace(/"/g, '""')}"`;
+};
+
+export const downloadStatement = async (req, res) => {
+  try {
+    // 1. Retrieve authenticated user and their active bank account
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const account = await Account.findOne({
+      userId: user._id,
+    });
+
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        message: "Bank account not found",
+      });
+    }
+
+    // 2. Parse and validate date parameters
+    let { startDate, endDate, format = "csv" } = req.query;
+
+    let end;
+    if (endDate) {
+      end = new Date(endDate);
+      if (isNaN(end.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid endDate format. Use YYYY-MM-DD.",
+        });
+      }
+      if (typeof endDate === "string" && !endDate.includes("T")) {
+        end.setHours(23, 59, 59, 999);
+      }
+    } else {
+      end = new Date();
+    }
+
+    let start;
+    if (startDate) {
+      start = new Date(startDate);
+      if (isNaN(start.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid startDate format. Use YYYY-MM-DD.",
+        });
+      }
+      if (typeof startDate === "string" && !startDate.includes("T")) {
+        start.setHours(0, 0, 0, 0);
+      }
+    } else {
+      // Default to 30 days ago
+      start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+      start.setHours(0, 0, 0, 0);
+    }
+
+    if (start > end) {
+      return res.status(400).json({
+        success: false,
+        message: "startDate cannot be after endDate",
+      });
+    }
+
+    // Sensible maximum date range of 366 days (1 year)
+    const MAX_RANGE_MS = 366 * 24 * 60 * 60 * 1000;
+    if (end.getTime() - start.getTime() > MAX_RANGE_MS) {
+      return res.status(400).json({
+        success: false,
+        message: "Date range cannot exceed 365 days (1 year).",
+      });
+    }
+
+    // 3. Compute opening balance prior to startDate
+    const priorAggregation = await Transaction.aggregate([
+      {
+        $match: {
+          $or: [
+            { senderAccount: account._id },
+            { receiverAccount: account._id },
+          ],
+          createdAt: { $lt: start },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          credits: {
+            $sum: {
+              $cond: [
+                { $eq: ["$receiverAccount", account._id] },
+                "$amountPaise",
+                0,
+              ],
+            },
+          },
+          debits: {
+            $sum: {
+              $cond: [
+                { $eq: ["$senderAccount", account._id] },
+                "$amountPaise",
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    const openingBalancePaise =
+      priorAggregation.length > 0
+        ? priorAggregation[0].credits - priorAggregation[0].debits
+        : 0;
+
+    // 4. Retrieve transactions in the range in chronological order
+    const transactions = await Transaction.find({
+      $or: [
+        { senderAccount: account._id },
+        { receiverAccount: account._id },
+      ],
+      createdAt: { $gte: start, $lte: end },
+    })
+      .sort({ createdAt: 1 })
+      .populate("senderAccount", "accountNo")
+      .populate("receiverAccount", "accountNo")
+      .lean();
+
+    // 5. Calculate running balance and row entries
+    let runningPaise = openingBalancePaise;
+    let totalDebitPaise = 0;
+    let totalCreditPaise = 0;
+
+    const formattedRows = transactions.map((tx) => {
+      const isIncoming =
+        tx.receiverAccount?._id?.toString() === account._id.toString();
+
+      let debitPaise = 0;
+      let creditPaise = 0;
+      let displayType = tx.txType;
+      let partyInfo = "";
+
+      if (tx.txType === "DEPOSIT") {
+        creditPaise = tx.amountPaise;
+        displayType = "Deposit";
+        partyInfo = "Self Deposit";
+      } else if (tx.txType === "WITHDRAWAL") {
+        debitPaise = tx.amountPaise;
+        displayType = "Withdrawal";
+        partyInfo = "Cash Withdrawal";
+      } else if (tx.txType === "TRANSFER") {
+        if (isIncoming) {
+          creditPaise = tx.amountPaise;
+          displayType = "Transfer Received";
+          partyInfo = `From A/C ${tx.senderAccount?.accountNo || "Unknown"}`;
+        } else {
+          debitPaise = tx.amountPaise;
+          displayType = "Transfer Sent";
+          partyInfo = `To A/C ${tx.receiverAccount?.accountNo || "Unknown"}`;
+        }
+      }
+
+      runningPaise += creditPaise - debitPaise;
+      totalDebitPaise += debitPaise;
+      totalCreditPaise += creditPaise;
+
+      const dateStr = new Date(tx.createdAt).toISOString().replace("T", " ").substring(0, 19);
+
+      return {
+        id: tx._id.toString(),
+        date: dateStr,
+        type: displayType,
+        details: partyInfo,
+        remark: tx.remark || "",
+        debitRupees: debitPaise > 0 ? (debitPaise / 100).toFixed(2) : "",
+        creditRupees: creditPaise > 0 ? (creditPaise / 100).toFixed(2) : "",
+        balanceRupees: (runningPaise / 100).toFixed(2),
+        rawDebitPaise: debitPaise,
+        rawCreditPaise: creditPaise,
+        rawBalancePaise: runningPaise,
+      };
+    });
+
+    const closingBalancePaise = runningPaise;
+    const startIso = start.toISOString().split("T")[0];
+    const endIso = end.toISOString().split("T")[0];
+    const customerName = `${user.firstName} ${user.lastName}`.trim();
+
+    // If client requested JSON format (for interactive frontend display / print view)
+    if (format === "json") {
+      return res.status(200).json({
+        success: true,
+        statement: {
+          accountNo: account.accountNo,
+          accountType: account.accountType,
+          customerName,
+          email: user.email,
+          period: { startDate: startIso, endDate: endIso },
+          openingBalanceRupees: openingBalancePaise / 100,
+          closingBalanceRupees: closingBalancePaise / 100,
+          totalDebitRupees: totalDebitPaise / 100,
+          totalCreditRupees: totalCreditPaise / 100,
+          totalTransactions: formattedRows.length,
+          transactions: formattedRows,
+        },
+      });
+    }
+
+    // 6. Generate CSV Content with Formula Injection Mitigation
+    const csvLines = [
+      `${sanitizeCsvCell("ACE Banking System - Official Account Statement")}`,
+      `${sanitizeCsvCell("Account Holder")},${sanitizeCsvCell(customerName)}`,
+      `${sanitizeCsvCell("Account Number")},${sanitizeCsvCell(account.accountNo)}`,
+      `${sanitizeCsvCell("Account Type")},${sanitizeCsvCell(account.accountType)}`,
+      `${sanitizeCsvCell("Statement Period")},${sanitizeCsvCell(`${startIso} to ${endIso}`)}`,
+      `${sanitizeCsvCell("Opening Balance (INR)")},${sanitizeCsvCell((openingBalancePaise / 100).toFixed(2))}`,
+      `${sanitizeCsvCell("Total Debits (INR)")},${sanitizeCsvCell((totalDebitPaise / 100).toFixed(2))}`,
+      `${sanitizeCsvCell("Total Credits (INR)")},${sanitizeCsvCell((totalCreditPaise / 100).toFixed(2))}`,
+      `${sanitizeCsvCell("Closing Balance (INR)")},${sanitizeCsvCell((closingBalancePaise / 100).toFixed(2))}`,
+      `${sanitizeCsvCell("Generated At")},${sanitizeCsvCell(new Date().toISOString().replace("T", " ").substring(0, 19))}`,
+      '""', // Blank line
+      [
+        sanitizeCsvCell("Date (UTC)"),
+        sanitizeCsvCell("Transaction ID"),
+        sanitizeCsvCell("Type"),
+        sanitizeCsvCell("Counterparty / Details"),
+        sanitizeCsvCell("Remark"),
+        sanitizeCsvCell("Debit (INR)"),
+        sanitizeCsvCell("Credit (INR)"),
+        sanitizeCsvCell("Running Balance (INR)"),
+      ].join(","),
+    ];
+
+    for (const row of formattedRows) {
+      csvLines.push(
+        [
+          sanitizeCsvCell(row.date),
+          sanitizeCsvCell(row.id),
+          sanitizeCsvCell(row.type),
+          sanitizeCsvCell(row.details),
+          sanitizeCsvCell(row.remark),
+          sanitizeCsvCell(row.debitRupees),
+          sanitizeCsvCell(row.creditRupees),
+          sanitizeCsvCell(row.balanceRupees),
+        ].join(",")
+      );
+    }
+
+    if (formattedRows.length === 0) {
+      csvLines.push(`${sanitizeCsvCell("No transactions found in selected statement period.")}`);
+    }
+
+    const csvContent = csvLines.join("\r\n");
+    const filename = `ACE_Statement_${startIso}_to_${endIso}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.status(200).send(csvContent);
+  } catch (error) {
+    console.error("Statement generation error:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to generate account statement",
+    });
+  }
+};

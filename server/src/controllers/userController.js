@@ -214,6 +214,7 @@ export const changePassword = async (req, res) => {
     // 7. Hash the new password and save
     const newPasswordHash = await bcrypt.hash(newPassword, 12);
     user.passwordHash = newPasswordHash;
+    user.passwordChangedAt = new Date();
     await user.save();
 
     return res.status(200).json({

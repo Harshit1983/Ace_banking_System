@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import api from "../services/api";
+import InactivityModal from "../components/InactivityModal";
+import StatementModal from "../components/StatementModal";
+import LoanSection from "../components/LoanSection";
 
 function formatINR(amount) {
   return new Intl.NumberFormat("en-IN", {
@@ -11,10 +14,31 @@ function formatINR(amount) {
 
 function Dashboard({ onLogout }) {
   const [user, setUser] = useState(null);
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem("ace_bank_theme");
+    if (saved) return saved === "dark";
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", darkMode ? "dark" : "light");
+    localStorage.setItem("ace_bank_theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
+
+  function toggleDarkMode() {
+    setDarkMode((prev) => !prev);
+  }
+
   const [account, setAccount] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Navigation tab: "banking" | "loans"
+  const [activeTab, setActiveTab] = useState("banking");
+
+  // Statement download modal state
+  const [showStatementModal, setShowStatementModal] = useState(false);
 
   // Money action form state
   const [transactionType, setTransactionType] = useState("deposit"); // "deposit" | "withdraw" | "transfer"
@@ -134,7 +158,7 @@ function Dashboard({ onLogout }) {
 
       setError(
         err.response?.data?.message ||
-        "Could not load your account details. Please try again."
+          "Could not load your account details. Please try again."
       );
     } finally {
       setLoading(false);
@@ -181,7 +205,7 @@ function Dashboard({ onLogout }) {
 
         setError(
           err.response?.data?.message ||
-          "Could not load your account details. Please try again."
+            "Could not load your account details. Please try again."
         );
       } finally {
         if (!ignore) {
@@ -318,7 +342,7 @@ function Dashboard({ onLogout }) {
     } catch (err) {
       setActionError(
         err.response?.data?.message ||
-        "Transaction failed. Please check details and try again."
+          "Transaction failed. Please check details and try again."
       );
     } finally {
       setActionLoading(false);
@@ -392,7 +416,17 @@ function Dashboard({ onLogout }) {
   }
 
   return (
-    <div className="dashboard-page">
+    <div className={`dashboard-page ${darkMode ? "dark-mode" : ""}`}>
+      {/* 15-Minute Session Inactivity Timeout Guard */}
+      <InactivityModal onTimeout={onLogout} />
+
+      {/* Account Statement Download Modal */}
+      <StatementModal
+        isOpen={showStatementModal}
+        onClose={() => setShowStatementModal(false)}
+        accountNumber={accountNumber}
+      />
+
       <header className="dashboard-header">
         <div className="brand">
           <div className="brand-icon">A</div>
@@ -401,6 +435,24 @@ function Dashboard({ onLogout }) {
             <span>Personal banking</span>
           </div>
         </div>
+
+        {/* Top-level Navigation between Banking & Loans */}
+        <nav className="dashboard-nav-tabs">
+          <button
+            type="button"
+            className={activeTab === "banking" ? "nav-tab active" : "nav-tab"}
+            onClick={() => setActiveTab("banking")}
+          >
+            💳 Accounts & Transfers
+          </button>
+          <button
+            type="button"
+            className={activeTab === "loans" ? "nav-tab active" : "nav-tab"}
+            onClick={() => setActiveTab("loans")}
+          >
+            🏠 Loans & Financing
+          </button>
+        </nav>
 
         <div className="dashboard-user">
           <div className="user-avatar">
@@ -411,6 +463,15 @@ function Dashboard({ onLogout }) {
             <strong>{displayName}</strong>
             <span>Account holder</span>
           </div>
+
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={toggleDarkMode}
+            aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {darkMode ? "☀️ Light Mode" : "🌙 Dark Mode"}
+          </button>
 
           <button
             className="settings-button"
@@ -440,20 +501,28 @@ function Dashboard({ onLogout }) {
             <p>Here's what's happening with your account.</p>
           </div>
 
-          <button
-            className="refresh-button"
-            onClick={() => loadDashboard()}
-          >
-            ↻ Refresh
-          </button>
+          <div className="dashboard-header-actions">
+            <button
+              type="button"
+              className="statement-btn"
+              onClick={() => setShowStatementModal(true)}
+            >
+              📊 Download Statement
+            </button>
+
+            <button
+              className="refresh-button"
+              onClick={() => loadDashboard()}
+            >
+              ↻ Refresh
+            </button>
+          </div>
         </div>
 
         {error && (
           <div className="message error dashboard-error">
             {error}
-            <button onClick={() => loadDashboard()}>
-              Retry
-            </button>
+            <button onClick={() => loadDashboard()}>Retry</button>
           </div>
         )}
 
@@ -461,7 +530,11 @@ function Dashboard({ onLogout }) {
           <div className="dashboard-loading">
             Loading your account information...
           </div>
+        ) : activeTab === "loans" ? (
+          /* Feature 2: Loan Applications Section */
+          <LoanSection user={user} />
         ) : (
+          /* Main Banking View */
           <>
             <section className="balance-card">
               <div className="balance-card-top">
@@ -480,9 +553,7 @@ function Dashboard({ onLogout }) {
               </div>
 
               <div className="balance-card-bottom">
-                <span>
-                  {account?.accountType || "SAVINGS"} ACCOUNT
-                </span>
+                <span>{account?.accountType || "SAVINGS"} ACCOUNT</span>
                 <span>Ace Bank</span>
               </div>
             </section>
@@ -662,24 +733,70 @@ function Dashboard({ onLogout }) {
                   <p>Your latest account activity</p>
                 </div>
 
-                {/* Filter chips */}
-                <div className="tx-filter-chips">
-                  {["ALL", "DEPOSIT", "WITHDRAWAL", "TRANSFER"].map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      className={
-                        historyType === type
-                          ? "tx-chip active"
-                          : "tx-chip"
-                      }
-                      onClick={() => handleFilterChange(type)}
-                    >
-                      {type === "ALL" ? "All" : type.charAt(0) + type.slice(1).toLowerCase()}
-                    </button>
-                  ))}
+                <div className="transaction-toolbar">
+                  {/* Filter chips */}
+                  <div className="tx-filter-chips">
+                    {["ALL", "DEPOSIT", "WITHDRAWAL", "TRANSFER"].map((type) => (
+                      <button
+                        key={type}
+                        type="button"
+                        className={
+                          historyType === type
+                            ? "tx-chip active"
+                            : "tx-chip"
+                        }
+                        onClick={() => handleFilterChange(type)}
+                      >
+                        {type === "ALL" ? "All" : type.charAt(0) + type.slice(1).toLowerCase()}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Statement Download CTA */}
+                  <button
+                    type="button"
+                    className="statement-download-chip"
+                    onClick={() => setShowStatementModal(true)}
+                    title="Download Account Statement"
+                  >
+                    📥 Statement
+                  </button>
                 </div>
               </div>
+
+              {/* Date Filter Bar */}
+              <form className="tx-date-filter-bar" onSubmit={handleDateFilterApply}>
+                <div className="date-filter-group">
+                  <label htmlFor="txFilterStart">From:</label>
+                  <input
+                    id="txFilterStart"
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                </div>
+                <div className="date-filter-group">
+                  <label htmlFor="txFilterEnd">To:</label>
+                  <input
+                    id="txFilterEnd"
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                  />
+                </div>
+                <button type="submit" className="date-filter-apply-btn">
+                  Filter
+                </button>
+                {(startDate || endDate) && (
+                  <button
+                    type="button"
+                    className="date-filter-reset-btn"
+                    onClick={handleDateFilterReset}
+                  >
+                    Reset
+                  </button>
+                )}
+              </form>
 
               {transactions.length === 0 ? (
                 <div className="empty-transactions">
@@ -791,7 +908,7 @@ function Dashboard({ onLogout }) {
         )}
 
         <footer className="dashboard-footer">
-          Ace Bank MERN learning project · Use dummy data only
+          Ace Bank MERN banking system · Certified simulated banking environment
         </footer>
       </main>
 

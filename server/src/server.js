@@ -1,4 +1,3 @@
-
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -9,6 +8,7 @@ import userRoutes from "./routes/userRoutes.js";
 import accountRoutes from "./routes/accountRoutes.js";
 import transactionRoutes from "./routes/transactionRoutes.js";
 import transferRoutes from "./routes/transferRoutes.js";
+import loanRoutes from "./routes/loanRoutes.js";
 
 dotenv.config();
 
@@ -71,6 +71,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/accounts", accountRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/transfers", transferRoutes);
+app.use("/api/loans", loanRoutes);
 
 // Centralized error handling middleware
 app.use((err, req, res, next) => {

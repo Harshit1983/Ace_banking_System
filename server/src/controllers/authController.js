@@ -5,6 +5,12 @@ import mongoose from "mongoose";
 import User from "../models/User.js";
 import Account from "../models/Account.js";
 import { runTransaction, supportsTransactions } from "../utils/transactionRunner.js";
+import {
+  sendEmail,
+  sendWelcomeEmail,
+  sendAccountRecoveryEmail,
+  sendPasswordResetEmail,
+} from "../services/emailService.js";
 
 // Generates a cryptographically secure 10-digit customer-facing account number.
 const generateAccountNumber = () => {
@@ -20,7 +26,7 @@ const generateToken = (userId) => {
   return jwt.sign(
     { userId },
     process.env.JWT_SECRET,
-    { expiresIn: "1d" }
+    { expiresIn: "15m" }
   );
 };
 
@@ -154,7 +160,7 @@ export const register = async (req, res) => {
 
         if (!accountCreated) {
           if (!session) {
-            await User.findByIdAndDelete(newUser._id).catch(() => {});
+            await User.findByIdAndDelete(newUser._id).catch(() => { });
           }
           throw new Error("Could not create a unique account number");
         }
@@ -162,6 +168,14 @@ export const register = async (req, res) => {
 
       // 8. Generate the token after successful registration.
       const token = generateToken(newUser._id.toString());
+      try {
+        await sendWelcomeEmail({
+          to: newUser.email,
+          firstName: newUser.firstName,
+        });
+      } catch (emailError) {
+        console.error("Welcome email failed for user:", newUser._id.toString());
+      }
 
       return res.status(201).json({
         success: true,
@@ -176,7 +190,7 @@ export const register = async (req, res) => {
       });
     } catch (error) {
       if (!supportsTransactions() && newUser?._id) {
-        await User.findByIdAndDelete(newUser._id).catch(() => {});
+        await User.findByIdAndDelete(newUser._id).catch(() => { });
       }
       throw error;
     }
@@ -290,3 +304,227 @@ export const login = async (req, res) => {
     });
   }
 };
+export const forgotPassword= async (req, res)=> {
+  try{
+    const {email }= req.body;
+    if(typeof email !== "string" || !email.trim()){
+      return res.status(400).json({
+        success: false,
+        message:"Email is required"
+      })
+
+    }
+    const nor = email.trim().toLowerCase();
+    const user = await User.findOne({
+      email: nor
+    })
+    const responseMessage = "If an account exists with this email, a password reset link will be sent.";
+
+    if(!user){
+      return res.status(200).json({
+        success: true,
+        message: responseMessage,
+      })
+    }
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    user.resetPasswordTokenHash = crypto
+      .createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
+    user.resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000);
+    await user.save();
+    const frontendUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    const resetLink =`${frontendUrl}/reset-password?token=${resetToken}`;
+    try {
+      await sendPasswordResetEmail({
+        to: user.email,
+        firstName: user.firstName,
+        resetLink,
+      });
+    } catch (emailError) {
+      // Clear the reset token if the email could not be sent.
+      user.resetPasswordTokenHash = undefined;
+      user.resetPasswordExpires = undefined;
+      await user.save();
+
+      throw emailError;
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: responseMessage,
+    });
+
+  }
+  catch(error){
+    console.error("Forgot password error:", error.message);
+    console.error(error.stack);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to process the request. Please try again.",
+    });
+  }
+  
+};
+
+// ================= RESET PASSWORD =================
+export const resetPassword = async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    // Validate input
+    if (
+      typeof token !== "string" ||
+      !token.trim() ||
+      typeof password !== "string" ||
+      password.length < 8 ||
+      password.length > 72
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid reset token and password of 8–72 characters are required.",
+      });
+    }
+
+    // Hash the token to find its stored hash
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(token)
+      .digest("hex");
+
+    // Find the user whose reset token has not expired
+    const user = await User.findOne({
+      resetPasswordTokenHash: tokenHash,
+      resetPasswordExpires: { $gt: new Date() },
+    }).select("+resetPasswordTokenHash +resetPasswordExpires");
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired password reset link.",
+      });
+    }
+
+    // Hash the new password before saving
+    user.passwordHash = await bcrypt.hash(password, 12);
+    user.passwordChangedAt = new Date();
+    // Make the reset link unusable after a successful reset
+    user.resetPasswordTokenHash = undefined;
+    user.resetPasswordExpires = undefined;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successfully. You can now log in with your new password.",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to reset your password. Please try again.",
+    });
+  }
+};
+
+// ================= FORGOT ACCOUNT NUMBER =================
+export const forgotAccount = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (typeof email !== "string" || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid email address",
+      });
+    }
+
+    // Generic response message to reduce account enumeration
+    const responseMessage =
+      "If an account is associated with this email, your account number has been sent.";
+
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        message: responseMessage,
+      });
+    }
+
+    // Find the associated active bank account
+    const account = await Account.findOne({
+      userId: user._id,
+      status: "ACTIVE",
+    });
+
+    if (!account) {
+      return res.status(200).json({
+        success: true,
+        message: responseMessage,
+      });
+    }
+
+    // Email the account number to the registered email address
+    try {
+      await sendAccountRecoveryEmail({
+        to: user.email,
+        firstName: user.firstName,
+        accountNo: account.accountNo,
+      });
+    } catch (emailError) {
+      // Do not expose account numbers or details in logs
+      console.error(
+        "Account recovery email delivery failed for user ID:",
+        user._id.toString()
+      );
+    }
+
+    // Never return the account number in the response
+    return res.status(200).json({
+      success: true,
+      message: responseMessage,
+    });
+  } catch (error) {
+    console.error("Forgot account error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to process the request. Please try again.",
+    });
+  }
+};
+
+// ================= REFRESH SESSION =================
+export const refreshSession = async (req, res) => {
+  try {
+    // Generates a fresh 15-minute token for the authenticated user
+    const token = generateToken(req.user.id);
+
+    return res.status(200).json({
+      success: true,
+      message: "Session extended successfully",
+      token,
+    });
+  } catch (error) {
+    console.error("Refresh session error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to extend session",
+    });
+  }
+};
+

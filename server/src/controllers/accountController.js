@@ -1,4 +1,3 @@
-
 import Account from "../models/Account.js";
 
 export const getMyAccount = async (req, res) => {

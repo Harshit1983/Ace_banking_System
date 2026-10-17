@@ -1,4 +1,3 @@
-
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
@@ -39,6 +38,15 @@ const authMiddleware = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         message: "User associated with this token no longer exists",
+      });
+    }
+    if (
+      user.passwordChangedAt &&
+      decoded.iat < Math.floor(user.passwordChangedAt.getTime() / 1000)
+    ) {
+      return res.status(401).json({
+        success: false,
+        message: "Password changed. Please log in again.",
       });
     }
 

@@ -1,4 +1,3 @@
-
 import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
@@ -39,6 +38,21 @@ const userSchema = new mongoose.Schema(
       required: true,
       select: false,
     },
+    resetPasswordTokenHash: {
+      type: String,
+      select: false,
+    },
+
+    resetPasswordExpires: {
+      type: Date,
+      select: false,
+    },
+
+    passwordChangedAt: {
+      type: Date,
+      default: null,
+    },
+
   },
   {
     timestamps: { createdAt: true, updatedAt: false },

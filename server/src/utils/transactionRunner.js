@@ -29,6 +29,7 @@ export const runTransaction = async (workFn) => {
       await session.endSession();
     }
   }
+  
 
   // Fallback for standalone MongoDB instances
   return await workFn(null);
